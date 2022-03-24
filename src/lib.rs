@@ -130,6 +130,17 @@ impl TaxBitExportRec {
             | TaxBitRecType::Income
             | TaxBitRecType::GiftReceived
             | TaxBitRecType::Trade => self.received_currency.as_str(),
+            TaxBitRecType::Invalid => {
+                if !self.received_currency.is_empty() {
+                    self.received_currency.as_str()
+                } else if !self.sent_currency.is_empty() {
+                    self.sent_currency.as_str()
+                } else if self.fee_currency.is_empty() {
+                    self.fee_currency.as_str()
+                } else {
+                    "no-currency-field"
+                }
+            }
             TaxBitRecType::Unknown => panic!("SNH"),
         }
     }

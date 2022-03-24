@@ -2,8 +2,7 @@ use std::fmt::Display;
 
 use dec_utils::dec_to_string_or_empty;
 use rust_decimal::prelude::*;
-//use rust_decimal_macros::dec;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_utc_time_ms::{de_string_to_utc_time_ms, se_time_ms_to_utc_z_string};
 use taxbitrec::TaxBitRecType;
 use time_ms_conversions::time_ms_to_utc_string;
@@ -47,10 +46,38 @@ pub struct TaxBitExportRec {
     pub source: String,
 
     #[serde(rename = "Internal Transfer")]
+    #[serde(deserialize_with = "de_string_true_false_to_bool")]
+    #[serde(serialize_with = "se_bool_to_uppercase_string_true_false")]
     pub internal_transfer: bool,
 
     #[serde(rename = "External ID")]
     pub external_id: String,
+}
+
+/// Deserilizes to boolean from upper or lower case TRUE FALSE
+pub fn de_string_true_false_to_bool<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<bool, D::Error> {
+    Ok(
+        match String::deserialize(deserializer)?.to_uppercase().as_ref() {
+            "TRUE" => true,
+            "FALSE" => false,
+            _ => {
+                return Err(de::Error::custom(
+                    "Expecting true or false in upper or lower case",
+                ))
+            }
+        },
+    )
+}
+
+/// Serilizes boolean as upper case string TRUE or FALSE
+pub fn se_bool_to_uppercase_string_true_false<S>(b: &bool, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let b_str = if *b { "TRUE" } else { "FALSE" };
+    s.serialize_str(b_str)
 }
 
 impl Display for TaxBitExportRec {
@@ -118,7 +145,6 @@ impl Eq for TaxBitExportRec {}
 
 impl PartialEq for TaxBitExportRec {
     fn eq(&self, other: &Self) -> bool {
-        println!("eq");
         self.time == other.time
             && self.type_txs == other.type_txs
             && self.received_currency == other.received_currency
@@ -136,7 +162,6 @@ impl PartialEq for TaxBitExportRec {
 
 impl PartialOrd for TaxBitExportRec {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        println!("partial_cmp");
         match self.time.partial_cmp(&other.time) {
             Some(core::cmp::Ordering::Equal) => {}
             ord => return ord,
@@ -196,11 +221,6 @@ impl Ord for TaxBitExportRec {
 
 #[cfg(test)]
 mod test {
-
-    //use time_ms_conversions::{dt_str_to_utc_time_ms, TzMassaging};
-
-    //use super::*;
-    //use rust_decimal::prelude::*;
     use rust_decimal_macros::dec;
 
     use crate::{TaxBitExportRec, TaxBitRecType};
@@ -407,5 +427,72 @@ mod test {
         tbr.type_txs = TaxBitRecType::Trade;
         tbr.received_currency = "ABC".to_owned();
         assert_eq!(tbr.get_asset(), "ABC");
+    }
+
+    #[test]
+    fn test_deserialize_from_csv() {
+        let csv = r#"
+Date,Transaction Type,Received Quantity,Received Currency,Sent Quantity,Sent Currency,Fee Currency,Fee Amount,Market Value,Source,Internal Transfer,External ID
+2020-03-02T07:32:05.000Z,Income,3e-7,BTC,,,,,0.0025979719720382955,BinanceUS,FALSE,2459217f-1a6f-4693-974c-d8d65f21abab
+2020-03-02T07:32:34.000Z,Income,0.0054,XRP,,,,,0.0012587400000000002,BinanceUS,FALSE,bf5cd6e1-64ec-4cb1-bbb2-502ac667561d
+2020-03-02T23:13:57.000Z,Income,0.10556,USD,,,,,0.10556,BinanceUS,FALSE,95be8346-8a8e-41b9-a7e3-d1baa4d1144f
+"#;
+
+        let mut tber_a: Vec<TaxBitExportRec> = vec![];
+        let rdr = csv.as_bytes();
+        let mut reader = csv::Reader::from_reader(rdr);
+        for entry in reader.deserialize() {
+            //println!("{entry:?}");
+            let rec: TaxBitExportRec = entry.unwrap();
+            println!("{rec}");
+            tber_a.push(rec);
+        }
+
+        let tber_a_expected: Vec<TaxBitExportRec> = vec![
+            TaxBitExportRec {
+                time: 1583134325000,
+                type_txs: TaxBitRecType::Income,
+                sent_quantity: None,
+                sent_currency: "".to_owned(),
+                received_quantity: Some(dec!(0.0000003)),
+                received_currency: "BTC".to_owned(),
+                fee_amount: None,
+                fee_currency: "".to_owned(),
+                market_value: Some(dec!(0.0025979719720382955)),
+                source: "BinanceUS".to_owned(),
+                internal_transfer: false,
+                external_id: "2459217f-1a6f-4693-974c-d8d65f21abab".to_owned(),
+            },
+            TaxBitExportRec {
+                time: 1583134354000,
+                type_txs: TaxBitRecType::Income,
+                sent_quantity: None,
+                sent_currency: "".to_owned(),
+                received_quantity: Some(dec!(0.0054)),
+                received_currency: "XRP".to_owned(),
+                fee_amount: None,
+                fee_currency: "".to_owned(),
+                market_value: Some(dec!(0.0012587400000000002)),
+                source: "BinanceUS".to_owned(),
+                internal_transfer: false,
+                external_id: "bf5cd6e1-64ec-4cb1-bbb2-502ac667561d".to_owned(),
+            },
+            TaxBitExportRec {
+                time: 1583190837000,
+                type_txs: TaxBitRecType::Income,
+                sent_quantity: None,
+                sent_currency: "".to_owned(),
+                received_quantity: Some(dec!(0.10556)),
+                received_currency: "USD".to_owned(),
+                fee_amount: None,
+                fee_currency: "".to_owned(),
+                market_value: Some(dec!(0.10556)),
+                source: "BinanceUS".to_owned(),
+                internal_transfer: false,
+                external_id: "95be8346-8a8e-41b9-a7e3-d1baa4d1144f".to_owned(),
+            },
+        ];
+        println!("{:#?}", tber_a);
+        assert_eq!(tber_a, tber_a_expected);
     }
 }
